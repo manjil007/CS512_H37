@@ -5,10 +5,29 @@
   <meta charset="utf-8">
   <title>Ray Tracing</title>
   <style>
-    body { background: #111; color: #ccc; font-family: monospace; }
-    canvas { border: 1px solid #444; touch-action: none; }
-    .layout { display: flex; gap: 10px; align-items: flex-start; }
-    .editors { display: flex; flex-direction: column; gap: 10px; }
+    body {
+      background: #111;
+      color: #ccc;
+      font-family: monospace;
+    }
+
+    canvas {
+      border: 1px solid #444;
+      touch-action: none;
+    }
+
+    .layout {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+    }
+
+    .editors {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
     textarea {
       background: #222;
       color: #0f0;
@@ -18,9 +37,26 @@
       box-sizing: border-box;
       white-space: pre;
     }
-    #shaderError { color: #f66; white-space: pre-wrap; width: 400px; margin: 0; }
-    .controls { margin-top: 10px; display: flex; flex-direction: column; gap: 5px; }
-    .control-row { display: flex; align-items: center; gap: 10px; }
+
+    #shaderError {
+      color: #f66;
+      white-space: pre-wrap;
+      width: 400px;
+      margin: 0;
+    }
+
+    .controls {
+      margin-top: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .control-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
   </style>
 </head>
 
@@ -62,14 +98,14 @@
     </div>
   </div>
 
-<script id="vertex-shader" type="x-shader/x-vertex">#version 300 es
+  <script id="vertex-shader" type="x-shader/x-vertex">#version 300 es
 in vec2 position;
 void main() {
     gl_Position = vec4(position, 0.0, 1.0);
 }
 </script>
 
-<script id="fragment-shader" type="x-shader/x-fragment">#version 300 es
+  <script id="fragment-shader" type="x-shader/x-fragment">#version 300 es
 precision highp float;
 
 uniform float u_time;
@@ -84,6 +120,19 @@ const float LIGHT_POWER = 3.0;
 const float FLOOR_Y = -2.0;
 const float CHECKER_SIZE = 3.0;
 const float GLASS_IOR = 1.5;  // refractive index of the glass sphere
+
+float myDot(vec3 a, vec3 b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+float myLength(vec3 v) {
+    return sqrt(myDot(v, v));
+}
+vec3 myNormalize(vec3 v) {
+    return v / myLength(v);
+}
+vec3 myReflect(vec3 I, vec3 N) {
+    return I - 2.0 * myDot(N, I) * N;
+}
 
 struct Ray {
     vec3 origin;
@@ -125,6 +174,9 @@ void initScene(float time) {
 
     float b = time * 0.3;
     cube = Cube(vec3(sin(b) * 2.0, cos(b * 1.5) + 0.5, -9.0 + cos(b * 0.7)), 0.8, vec3(0.3, 0.8, 0.3), 0.85);
+
+    float c = time * 0.4;
+    glassSphere = Sphere(vec3(sin(c) * 1.0, -0.2, -3.4), 1.0, vec3(0.95, 0.98, 1.0));
 }
 
 bool intersectSphere(Ray ray, Sphere s, out float t) {
@@ -198,6 +250,7 @@ HitData traceScene(Ray ray, bool includeLight) {
     }
 
     if (intersectSphere(ray, sphere, t) && t < hit.t) {
+
         vec3 p = ray.origin + ray.direction * t;
         hit = HitData(true, t, p, (p - sphere.center) / sphere.radius, sphere.color, 0.0, false, false);
     }
@@ -284,85 +337,85 @@ void main() {
 }
 </script>
 
-<script>
-  const canvas = document.getElementById("glcanvas");
-  const gl = canvas.getContext("webgl2");
+  <script>
+    const canvas = document.getElementById("glcanvas");
+    const gl = canvas.getContext("webgl2");
 
-  function compile(type, source) {
-    const shader = gl.createShader(type);
-    gl.shaderSource(shader, source);
-    gl.compileShader(shader);
-    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(shader));
-    return shader;
-  }
-
-  function createProgram(vsSource, fsSource) {
-    const prog = gl.createProgram();
-    gl.attachShader(prog, compile(gl.VERTEX_SHADER, vsSource));
-    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fsSource));
-    gl.bindAttribLocation(prog, 0, "position");
-    gl.linkProgram(prog);
-    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
-    return prog;
-  }
-
-  const vertEditor = document.getElementById("vertEditor");
-  const fragEditor = document.getElementById("fragEditor");
-  const shaderError = document.getElementById("shaderError");
-  vertEditor.value = document.getElementById("vertex-shader").textContent;
-  fragEditor.value = document.getElementById("fragment-shader").textContent;
-
-  let program;
-  function updateProgram() {
-    try {
-      const prog = createProgram(vertEditor.value, fragEditor.value);
-      gl.deleteProgram(program);
-      program = prog;
-      gl.useProgram(program);
-      shaderError.textContent = "";
-    } catch (e) {
-      shaderError.textContent = e.message.replace(/\0/g, "");
+    function compile(type, source) {
+      const shader = gl.createShader(type);
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(shader));
+      return shader;
     }
-  }
-  updateProgram();
-  vertEditor.addEventListener("input", updateProgram);
-  fragEditor.addEventListener("input", updateProgram);
 
-  gl.bindVertexArray(gl.createVertexArray());
-  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-  gl.enableVertexAttribArray(0);
+    function createProgram(vsSource, fsSource) {
+      const prog = gl.createProgram();
+      gl.attachShader(prog, compile(gl.VERTEX_SHADER, vsSource));
+      gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fsSource));
+      gl.bindAttribLocation(prog, 0, "position");
+      gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+      return prog;
+    }
 
-  const bounces = document.getElementById("bounces");
-  const ambient = document.getElementById("ambient");
-  for (const slider of [bounces, ambient]) {
-    slider.addEventListener("input", () => document.getElementById(slider.id + "Value").textContent = slider.value);
-  }
+    const vertEditor = document.getElementById("vertEditor");
+    const fragEditor = document.getElementById("fragEditor");
+    const shaderError = document.getElementById("shaderError");
+    vertEditor.value = document.getElementById("vertex-shader").textContent;
+    fragEditor.value = document.getElementById("fragment-shader").textContent;
 
-  // Dragging orbits the camera
-  let pitch = 0, yaw = 0;
-  canvas.addEventListener("pointerdown", e => canvas.setPointerCapture(e.pointerId));
-  canvas.addEventListener("pointermove", e => {
-    if (!canvas.hasPointerCapture(e.pointerId)) return;
-    yaw -= e.movementX * 0.01;
-    pitch = Math.min(1.4, Math.max(-0.2, pitch + e.movementY * 0.01));
-  });
+    let program;
+    function updateProgram() {
+      try {
+        const prog = createProgram(vertEditor.value, fragEditor.value);
+        gl.deleteProgram(program);
+        program = prog;
+        gl.useProgram(program);
+        shaderError.textContent = "";
+      } catch (e) {
+        shaderError.textContent = e.message.replace(/\0/g, "");
+      }
+    }
+    updateProgram();
+    vertEditor.addEventListener("input", updateProgram);
+    fragEditor.addEventListener("input", updateProgram);
 
-  function render(time) {
+    gl.bindVertexArray(gl.createVertexArray());
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(0);
+
+    const bounces = document.getElementById("bounces");
+    const ambient = document.getElementById("ambient");
+    for (const slider of [bounces, ambient]) {
+      slider.addEventListener("input", () => document.getElementById(slider.id + "Value").textContent = slider.value);
+    }
+
+    // Dragging orbits the camera
+    let pitch = 0, yaw = 0;
+    canvas.addEventListener("pointerdown", e => canvas.setPointerCapture(e.pointerId));
+    canvas.addEventListener("pointermove", e => {
+      if (!canvas.hasPointerCapture(e.pointerId)) return;
+      yaw -= e.movementX * 0.01;
+      pitch = Math.min(1.4, Math.max(-0.2, pitch + e.movementY * 0.01));
+    });
+
+    function render(time) {
+      requestAnimationFrame(render);
+      if (!program) return;
+
+      const uniform = name => gl.getUniformLocation(program, name);
+      gl.uniform1f(uniform("u_time"), time / 1000);
+      gl.uniform2f(uniform("u_resolution"), canvas.width, canvas.height);
+      gl.uniform1i(uniform("u_maxBounces"), bounces.value);
+      gl.uniform1f(uniform("u_ambientStrength"), ambient.value);
+      gl.uniform2f(uniform("u_cameraOrbit"), pitch, yaw);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    }
     requestAnimationFrame(render);
-    if (!program) return;
-
-    const uniform = name => gl.getUniformLocation(program, name);
-    gl.uniform1f(uniform("u_time"), time / 1000);
-    gl.uniform2f(uniform("u_resolution"), canvas.width, canvas.height);
-    gl.uniform1i(uniform("u_maxBounces"), bounces.value);
-    gl.uniform1f(uniform("u_ambientStrength"), ambient.value);
-    gl.uniform2f(uniform("u_cameraOrbit"), pitch, yaw);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-  }
-  requestAnimationFrame(render);
-</script>
+  </script>
 </body>
 
 </html>
