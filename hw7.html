@@ -212,14 +212,22 @@ bool intersectCube(Ray ray, out float t, out vec3 normal) {
 }
 
 //eta = n1 / n2
-//vec3 refraction(vec3 I, vec3 N, float eta) {
-//    <!-- insert your code here -->
-//}
+vec3 refraction(vec3 I, vec3 N, float eta) {
+    float dotNI = myDot(N, I);
+    float k = 1.0 - eta * eta * (1.0 - dotNI * dotNI);
+    if (k < 0.0) {
+        return vec3(0.0); // Total internal reflection
+    }
+    return eta * I - (eta * dotNI + sqrt(k)) * N;
+}
 
 // Schlick approximation
-//float schlick(float cosine, float ref_idx) {
-//    <!-- insert your code here -->
-//}
+float schlick(float cosine, float ref_idx) {
+    float r0 = (1.0 - ref_idx) / (1.0 + ref_idx);
+    r0 = r0 * r0;
+    float c = 1.0 - cosine;
+    return r0 + (1.0 - r0) * (c * c * c * c * c);
+}
 
 bool intersectFloor(Ray ray, out float t) {
     if (abs(ray.direction.y) < 0.0001) return false;
@@ -250,9 +258,13 @@ HitData traceScene(Ray ray, bool includeLight) {
     }
 
     if (intersectSphere(ray, sphere, t) && t < hit.t) {
-
         vec3 p = ray.origin + ray.direction * t;
         hit = HitData(true, t, p, (p - sphere.center) / sphere.radius, sphere.color, 0.0, false, false);
+    }
+
+    if (intersectSphere(ray, glassSphere, t) && t < hit.t) {
+        vec3 p = ray.origin + ray.direction * t;
+        hit = HitData(true, t, p, (p - glassSphere.center) / glassSphere.radius, glassSphere.color, 0.0, false, true);
     }
 
     return hit;
@@ -278,42 +290,69 @@ vec3 trace(Ray ray) {
         }
 
         // Refraction: (option 1)either reflects or refracts the ray, whichever Schlick says is stronger
-        // (option 2): finalColor = hit.color * (F * reflectionColor + (1.0 - F) * refractionColor)
-        // (option 3): Monte Carlo Sampling (multiple rays per pixel), reflect with probability F (random() < schlick_value), else refract, and average many samples per pixel
-        //<!-- if (hit.isGlass) {
-        //    <!-- insert your code here -->
+        if (hit.isGlass) {
+            bool entering = myDot(ray.direction, hit.normal) < 0.0;
+            vec3 N = entering ? hit.normal : -hit.normal;
+            float eta = entering ? (1.0 / GLASS_IOR) : GLASS_IOR;
 
-        //    vec3 direction;
-        //    if (total_internal_reflection || schlick_value > 0.5) {
-                //direction = reflection ray
-        //        <!-- insert your code here -->
-        //    } else {
-                //direction = refraction ray
-        //        <!-- insert your code here -->
-        //    }
+            // Direct Phong specular glint on the outer glass surface
+            if (entering) {
+                vec3 toLightG = lightSphere.center - hit.point;
+                float lightDistG = myLength(toLightG);
+                vec3 lightDirG = toLightG / lightDistG;
+                HitData blockerG = traceScene(Ray(hit.point + N * 0.002, lightDirG), false);
+                float visG = (blockerG.hit && blockerG.t < lightDistG) ? 0.0 : 1.0;
+                float specG = pow(max(myDot(-ray.direction, myReflect(-lightDirG, N)), 0.0), 64.0);
+                float falloffG = 1.0 / (1.0 + 0.1 * lightDistG * lightDistG);
+                color += attenuation * lightSphere.color * (LIGHT_POWER * 0.9 * specG * falloffG * visG);
+            } else {
+                attenuation *= 1.0 / (1.0 + vec3(0.08, 0.03, 0.01) * hit.t);
+            }
 
-        //    ray = Ray(hit.point + direction * 0.001, direction);
-        ////Use Schlick approximation to determine contributions from reflection and refraction
-        //    attenuation *= hit.color;
-        //    continue;
-        //}
+            vec3 refractDir = refraction(ray.direction, N, eta);
+            bool total_internal_reflection = myDot(refractDir, refractDir) < 0.0001;
+
+            float cosine = entering ? min(myDot(-ray.direction, N), 1.0) : min(myDot(refractDir, -N), 1.0);
+            float schlick_value = total_internal_reflection ? 1.0 : schlick(cosine, eta);
+
+            vec3 direction;
+            if (total_internal_reflection || schlick_value > 0.5) {
+                direction = myReflect(ray.direction, N);
+            } else {
+                direction = refractDir;
+            }
+
+            vec3 offset = (myDot(direction, N) > 0.0 ? N : -N) * 0.002;
+            ray = Ray(hit.point + offset, direction);
+            attenuation *= hit.color;
+            continue;
+        }
+
 
         vec3 toLight = lightSphere.center - hit.point;
         float lightDist = length(toLight);
         vec3 lightDir = toLight / lightDist;
 
         HitData blocker = traceScene(Ray(hit.point + hit.normal * 0.001, lightDir), false);
-        float visible = blocker.hit && blocker.t < lightDist ? 0.0 : 1.0;
-        float diff = max(dot(hit.normal, lightDir), 0.0);
+        float visible = 1.0;
+        if (blocker.hit && blocker.t < lightDist) {
+            visible = blocker.isGlass ? 0.65 : 0.0;
+        }
+        float diff = max(myDot(hit.normal, lightDir), 0.0);
         float falloff = 1.0 / (1.0 + 0.1 * lightDist * lightDist);
-
-        //  (optional) Ambient fill light approximates indirect light we don't trace.
-        vec3 shading = hit.color * (LIGHT_POWER * diff * falloff * visible + u_ambientStrength);
+        // Phong Specular term (using our custom myReflect and myDot)
+        vec3 viewDir = -ray.direction;
+        vec3 reflectDir = myReflect(-lightDir, hit.normal);
+        float spec = diff > 0.0 ? pow(max(myDot(viewDir, reflectDir), 0.0), 32.0) : 0.0;
+        // Combine Phong: Ambient + Diffuse + Specular
+        vec3 diffuseAndAmbient = hit.color * (LIGHT_POWER * diff * falloff * visible + u_ambientStrength);
+        vec3 specular = lightSphere.color * (LIGHT_POWER * 0.5 * spec * falloff * visible);
+        vec3 shading = diffuseAndAmbient + specular;
         color += attenuation * shading * (1.0 - hit.reflectivity);
 
         if (hit.reflectivity == 0.0) break;
         attenuation *= hit.reflectivity;
-        ray = Ray(hit.point + hit.normal * 0.001, reflect(ray.direction, hit.normal));
+        ray = Ray(hit.point + hit.normal * 0.001, myReflect(ray.direction, hit.normal));
     }
 
     return color;
